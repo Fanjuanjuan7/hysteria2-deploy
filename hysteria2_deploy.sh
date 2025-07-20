@@ -482,7 +482,7 @@ generate_share_link() {
     echo "$SHARE_LINK_PLAIN" > /etc/hysteria2/share_link_plain.txt
     
     # 生成客户端配置文件
-    cat > /etc/hysteria2/client.yaml << EOF
+    cat > /etc/hysteria2/client.yaml << 'ENDOFCLIENT'
 server: ${CURRENT_IP}:${CURRENT_PORT}
 
 auth: ${PASSWORD}
@@ -501,7 +501,13 @@ socks5:
   listen: 127.0.0.1:1080
 http:
   listen: 127.0.0.1:8080
-EOF
+ENDOFCLIENT
+
+    # 变量替换
+    sed -i "s|\${CURRENT_IP}|$CURRENT_IP|g" /etc/hysteria2/client.yaml
+    sed -i "s|\${CURRENT_PORT}|$CURRENT_PORT|g" /etc/hysteria2/client.yaml
+    sed -i "s|\${PASSWORD}|$PASSWORD|g" /etc/hysteria2/client.yaml
+    sed -i "s|\${OBFS_PASSWORD}|$OBFS_PASSWORD|g" /etc/hysteria2/client.yaml
     
     # 输出成功信息
     echo -e "${GREEN}分享链接已生成！${PLAIN}"
@@ -678,7 +684,7 @@ show_menu() {
                 
                 # 生成客户端配置
                 mkdir -p /etc/hysteria2
-                cat > /etc/hysteria2/client.yaml << EOF
+                cat > /etc/hysteria2/client.yaml << 'ENDOFCLIENTCFG'
 server: ${IP}:${PORT}
 
 auth: ${PASSWORD}
@@ -697,7 +703,13 @@ socks5:
   listen: 127.0.0.1:1080
 http:
   listen: 127.0.0.1:8080
-EOF
+ENDOFCLIENTCFG
+
+                # 变量替换
+                sed -i "s|\${IP}|$IP|g" /etc/hysteria2/client.yaml
+                sed -i "s|\${PORT}|$PORT|g" /etc/hysteria2/client.yaml
+                sed -i "s|\${PASSWORD}|$PASSWORD|g" /etc/hysteria2/client.yaml
+                sed -i "s|\${OBFS_PASS}|$OBFS_PASS|g" /etc/hysteria2/client.yaml
                 echo -e "${YELLOW}客户端配置已生成: /etc/hysteria2/client.yaml${PLAIN}"
             fi
             read -p "按任意键继续..." enter
