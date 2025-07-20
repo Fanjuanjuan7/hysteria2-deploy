@@ -321,9 +321,27 @@ echo -e "${YELLOW}配置防火墙...${PLAIN}"
 # 将端口字符串转换为数组
 IFS=',' read -ra PORT_ARRAY <<< "$ports"
 
-# 检测是否有防火墙并开放端口
+# 检测云环境
+is_cloud_server=0
+if [ -f /sys/hypervisor/uuid ] && grep -q -i 'ec2\|amazon' /sys/hypervisor/uuid 2>/dev/null; then
+    is_cloud_server=1
+    cloud_provider="AWS"
+elif [ -f /sys/devices/virtual/dmi/id/product_uuid ] && grep -q -i 'alibaba\|aliyun' /etc/hosts 2>/dev/null; then
+    is_cloud_server=1
+    cloud_provider="阿里云"
+elif grep -q -i 'tencentcloud\|tencent-cloud' /etc/hosts 2>/dev/null; then
+    is_cloud_server=1
+    cloud_provider="腾讯云"
+elif grep -q -i 'huaweicloud' /etc/hosts 2>/dev/null; then
+    is_cloud_server=1
+    cloud_provider="华为云"
+fi
+
+# 检测是否有防火墙工具并尝试开放端口
+has_firewall=0
 if command -v firewall-cmd &>/dev/null; then
-    # CentOS/RHEL
+    has_firewall=1
+    echo -e "${GREEN}检测到firewalld防火墙，正在配置...${PLAIN}"
     for PORT in "${PORT_ARRAY[@]}"; do
         firewall-cmd --permanent --add-port="${PORT}/udp"
     done
@@ -331,7 +349,8 @@ if command -v firewall-cmd &>/dev/null; then
     firewall-cmd --reload
     echo -e "${GREEN}已配置firewalld防火墙规则${PLAIN}"
 elif command -v ufw &>/dev/null; then
-    # Ubuntu/Debian with UFW
+    has_firewall=1
+    echo -e "${GREEN}检测到UFW防火墙，正在配置...${PLAIN}"
     for PORT in "${PORT_ARRAY[@]}"; do
         ufw allow "${PORT}/udp"
     done
@@ -339,7 +358,8 @@ elif command -v ufw &>/dev/null; then
     ufw reload
     echo -e "${GREEN}已配置UFW防火墙规则${PLAIN}"
 elif command -v iptables &>/dev/null; then
-    # 通用 iptables
+    has_firewall=1
+    echo -e "${GREEN}检测到iptables防火墙，正在配置...${PLAIN}"
     for PORT in "${PORT_ARRAY[@]}"; do
         iptables -A INPUT -p udp --dport "${PORT}" -j ACCEPT
     done
@@ -347,20 +367,104 @@ elif command -v iptables &>/dev/null; then
     if command -v iptables-save &>/dev/null; then
         iptables-save > /etc/iptables.rules
         echo -e "${GREEN}已配置iptables防火墙规则并保存${PLAIN}"
+        
+        # 创建持久化规则
+        if [ -d "/etc/network/if-pre-up.d" ]; then
+            cat > /etc/network/if-pre-up.d/iptablesload << 'EOF'
+#!/bin/sh
+iptables-restore < /etc/iptables.rules
+exit 0
+EOF
+            chmod +x /etc/network/if-pre-up.d/iptablesload
+            echo -e "${GREEN}已创建iptables启动加载规则${PLAIN}"
+        fi
     else 
         echo -e "${YELLOW}已配置iptables防火墙规则，但可能需要手动保存${PLAIN}"
     fi
 else
-    echo -e "${YELLOW}未检测到防火墙服务，可能需要手动配置防火墙规则${PLAIN}"
-    echo -e "${YELLOW}请确保以下端口已开放:${PLAIN}"
-    echo -e "${YELLOW}UDP端口: $ports${PLAIN}"
-    echo -e "${YELLOW}TCP端口: 443${PLAIN}"
+    # 没有检测到防火墙但也不一定是云服务器
+    if [ $is_cloud_server -eq 0 ]; then
+        # 提示安装防火墙工具
+        echo -e "${YELLOW}未检测到防火墙工具，是否需要安装？[y/n]${PLAIN}"
+        read -r install_firewall
+        if [[ "$install_firewall" =~ ^[Yy]$ ]]; then
+            if [ -f /etc/debian_version ]; then
+                apt update
+                apt install -y ufw
+                ufw allow ssh
+                ufw enable
+                for PORT in "${PORT_ARRAY[@]}"; do
+                    ufw allow "${PORT}/udp"
+                done
+                ufw allow 443/tcp
+                ufw reload
+                echo -e "${GREEN}已安装并配置UFW防火墙${PLAIN}"
+            elif [ -f /etc/redhat-release ]; then
+                yum -y install firewalld
+                systemctl enable firewalld
+                systemctl start firewalld
+                for PORT in "${PORT_ARRAY[@]}"; do
+                    firewall-cmd --permanent --add-port="${PORT}/udp"
+                done
+                firewall-cmd --permanent --add-port=443/tcp
+                firewall-cmd --reload
+                echo -e "${GREEN}已安装并配置firewalld防火墙${PLAIN}"
+            else
+                echo -e "${RED}无法确定系统类型，请手动安装防火墙工具${PLAIN}"
+            fi
+        fi
+    fi
 fi
 
-# 针对云服务器环境提示
-echo -e "${YELLOW}如果您使用的是云服务器(阿里云/腾讯云等)，请同时在云控制台安全组中开放以下端口:${PLAIN}"
-echo -e "${YELLOW}UDP端口: $ports${PLAIN}"
-echo -e "${YELLOW}TCP端口: 443${PLAIN}"
+# 云服务器安全组配置指南
+if [ $is_cloud_server -eq 1 ]; then
+    echo -e "\n${YELLOW}================================${PLAIN}"
+    echo -e "${YELLOW}检测到您正在使用${PLAIN} ${GREEN}$cloud_provider${PLAIN} ${YELLOW}云服务器${PLAIN}"
+    echo -e "${YELLOW}================================${PLAIN}"
+    echo -e "${RED}重要提示：云服务器还需要在云控制台配置安全组规则！${PLAIN}\n"
+    
+    echo -e "${GREEN}【$cloud_provider 安全组配置步骤】${PLAIN}"
+    case $cloud_provider in
+        "阿里云")
+            echo -e "1. 登录阿里云控制台: https://ecs.console.aliyun.com/"
+            echo -e "2. 点击左侧菜单[网络与安全] -> [安全组]"
+            echo -e "3. 找到您的实例所在安全组，点击[配置规则]"
+            echo -e "4. 点击[添加安全组规则]，添加以下规则:"
+            ;;
+        "腾讯云")
+            echo -e "1. 登录腾讯云控制台: https://console.cloud.tencent.com/"
+            echo -e "2. 进入[云服务器] -> [安全组]"
+            echo -e "3. 选择您的安全组，点击[修改规则]"
+            echo -e "4. 点击[添加规则]，添加以下规则:"
+            ;;
+        "华为云")
+            echo -e "1. 登录华为云控制台: https://console.huaweicloud.com/"
+            echo -e "2. 进入[弹性云服务器] -> [安全组]"
+            echo -e "3. 选择您的安全组，点击[配置规则]"
+            echo -e "4. 点击[添加规则]，添加以下规则:"
+            ;;
+        *)
+            echo -e "1. 登录您的云服务控制台"
+            echo -e "2. 找到安全组/防火墙配置"
+            echo -e "3. 添加以下入站规则:"
+            ;;
+    esac
+    
+    echo -e "\n${YELLOW}UDP规则:${PLAIN}"
+    for PORT in "${PORT_ARRAY[@]}"; do
+        echo -e "   协议类型:UDP  端口范围:${PORT}/${PORT}  来源:0.0.0.0/0"
+    done
+    echo -e "${YELLOW}TCP规则:${PLAIN}"
+    echo -e "   协议类型:TCP  端口范围:443/443  来源:0.0.0.0/0\n"
+    
+    echo -e "${RED}注意: 如不配置安全组规则，服务将无法正常连接！${PLAIN}"
+    echo -e "${YELLOW}================================${PLAIN}\n"
+else
+    # 提示端口开放情况
+    echo -e "\n${YELLOW}请确保以下端口已开放:${PLAIN}"
+    echo -e "${YELLOW}UDP端口: $ports${PLAIN}"
+    echo -e "${YELLOW}TCP端口: 443${PLAIN}\n"
+fi
 
 # 重启服务
 echo -e "${YELLOW}启动服务...${PLAIN}"
