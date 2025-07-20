@@ -143,8 +143,9 @@ quic:
   maxStreamReceiveWindow: 8388608
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 60s
-  keepAlivePeriod: 5s
+  maxIdleTimeout: 90s
+  keepAlivePeriod: 4s
+  disablePathMTUDiscovery: false
 EOF
 
 # 创建systemd服务
@@ -281,34 +282,47 @@ generate_links() {
     all_ports="$port$hop_ports"
     
     echo -e "${GREEN}分享链接:${PLAIN}"
-    echo -e "hysteria2://$password@$ip:$port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com"
+    echo -e "hysteria2://$password@$ip:$port?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4"
     echo -e "${GREEN}端口跳跃链接:${PLAIN}"
-    echo -e "hysteria2://$password@$ip:$all_ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com&hops=$all_ports"
+    echo -e "hysteria2://$password@$ip:$all_ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4&hop=1"
     
     # 创建客户端配置
     mkdir -p /etc/hysteria2
-    cat > /etc/hysteria2/client.yaml << EOCLIENT
+    cat > /etc/hysteria2/client.yaml << EOF_CLIENT
 server: $ip:$port
+
 auth: $password
+
 tls:
   insecure: true
   sni: www.apple.com
+  alpn:
+    - h3
+
 obfs:
   type: salamander
   salamander:
     password: $obfs_password
+
 bandwidth:
   up: 10 mbps
   down: 10 mbps
+
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 90s
+  keepAlivePeriod: 4s
+
 fastOpen: true
-hops:
-  ports: ["$base_port", "$((base_port + 97))", "$((base_port + 97*2))", "$((base_port + 97*3))", "$((base_port + 97*4))"]
-  interval: 10s
+
 socks5:
   listen: 127.0.0.1:1080
 http:
   listen: 127.0.0.1:8080
-EOCLIENT
+EOF_CLIENT
     
     echo -e "${GREEN}客户端配置已保存至:${PLAIN} /etc/hysteria2/client.yaml"
     echo -e "${YELLOW}提示: 端口跳跃功能需要确保所有端口($all_ports)都在防火墙中放行${PLAIN}"
@@ -512,8 +526,8 @@ echo -e "${GREEN}端口跳跃:${PLAIN} $ports"
 echo -e "${GREEN}=============================${PLAIN}"
 
 # 修改生成分享链接的部分，确保兼容性
-echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com"
-echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$all_ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com&hop=1"
+echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4"
+echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4&hop=1"
 
 # 添加防火墙放行提示
 echo -e "\n${YELLOW}===== 防火墙端口放行指南 =====${PLAIN}"
