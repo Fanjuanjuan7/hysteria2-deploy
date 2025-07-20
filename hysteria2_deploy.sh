@@ -366,21 +366,6 @@ quic:
 
 trafficStats:
   listen: 127.0.0.1:9999
-
-acl:
-  inline: |
-    # Block Amazon AWS
-    block domain icloud.com
-    block domain aws.amazon.com
-    block domain amazonaws.com
-    
-    # Block common attack sources
-    block geoip:CN
-    block geoip:IR
-    block geoip:RU
-    
-    # Direct for private IPs
-    direct ip:private
 EOF
     
     # 验证配置文件格式
