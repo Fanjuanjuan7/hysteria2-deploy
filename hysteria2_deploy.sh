@@ -325,41 +325,78 @@ configure_hysteria2() {
     
     # 创建配置文件
     cat > /etc/hysteria2/config.yaml << EOF
-listen: :${PORTS%%,*} # 只使用第一个端口，因为Hysteria2不支持多端口配置
+listen: :${PORTS%%,*}
+
 tls:
   cert: /etc/hysteria2/cert/cert.crt
   key: /etc/hysteria2/cert/private.key
+
 auth:
   type: password
-  password: $PASSWORD
+  password: ${PASSWORD}
+
 masquerade:
   type: proxy
   proxy:
     url: https://www.apple.com/
+    rewriteHost: true
   file:
     dir: /var/www/html
+
+bandwidth:
+  up: ${BANDWIDTH_UP}
+  down: ${BANDWIDTH_DOWN}
+
+ignoreClientBandwidth: false
+
+outbounds:
+  - name: direct
+    type: direct
+  - name: resolver
+    type: resolver
+    resolver:
+      - 8.8.8.8
+      - 1.1.1.1
+
+resolver:
+  type: udp
+  udp:
+    addr: "8.8.8.8:53"
+    timeout: 4s
+
 obfs:
   type: salamander
   salamander:
-    password: $OBFS_PASSWORD
-bandwidth:
-  up: $BANDWIDTH_UP # 上行带宽限制（Mbps）
-  down: $BANDWIDTH_DOWN # 下行带宽限制（Mbps）
-ignoreClientBandwidth: false # 启用服务器端带宽限制
+    password: ${OBFS_PASSWORD}
 
-# 增强连接稳定性的参数
-disableUDP: false
-udpIdleTimeout: 60s
-recv_window_conn: 10485760 # 调整接收窗口大小以适应较小带宽
-recv_window_client: 15728640 # 调整客户端窗口大小以适应较小带宽
-max_conn_client: 64 # 降低最大连接数以优化小带宽场景
-disable_path_mtu_discovery: false
-resolver: "udp://1.1.1.1:53"
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 30s
+  maxAckDelay: 20ms
+  keepAlivePeriod: 10s
+  disablePathMTUDiscovery: false
 
-# 低延迟设置
-tcp_window_clamp: true
-tcp_window_connect: 65535
-tcp_window_client: 65535
+trafficStats:
+  listen: 127.0.0.1:9999
+
+acl:
+  inline: |
+    # Block Amazon AWS
+    block icloud.com
+    block aws.amazon.com
+    block amazonaws.com
+    
+    # Block common attack sources
+    block country:CN
+    block country:IR
+    block country:RU
+    
+    # Direct for private IPs
+    direct private
+
 EOF
     
     # 验证配置文件格式
@@ -372,7 +409,6 @@ EOF
     
     echo -e "${GREEN}Hysteria2 配置完成！${PLAIN}"
     echo -e "${YELLOW}当前带宽设置：上行 ${BANDWIDTH_UP}Mbps，下行 ${BANDWIDTH_DOWN}Mbps${PLAIN}"
-    echo -e "${GREEN}已针对小带宽场景优化配置参数${PLAIN}"
     
     # 显示配置内容以便调试
     echo -e "${YELLOW}配置文件内容:${PLAIN}"
