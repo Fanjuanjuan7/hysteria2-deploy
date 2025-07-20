@@ -344,25 +344,10 @@ masquerade:
     dir: /var/www/html
 
 bandwidth:
-  up: ${BANDWIDTH_UP}
-  down: ${BANDWIDTH_DOWN}
+  up: ${BANDWIDTH_UP} mbps
+  down: ${BANDWIDTH_DOWN} mbps
 
 ignoreClientBandwidth: false
-
-outbounds:
-  - name: direct
-    type: direct
-  - name: resolver
-    type: resolver
-    resolver:
-      - 8.8.8.8
-      - 1.1.1.1
-
-resolver:
-  type: udp
-  udp:
-    addr: "8.8.8.8:53"
-    timeout: 4s
 
 obfs:
   type: salamander
@@ -385,18 +370,17 @@ trafficStats:
 acl:
   inline: |
     # Block Amazon AWS
-    block icloud.com
-    block aws.amazon.com
-    block amazonaws.com
+    block domain icloud.com
+    block domain aws.amazon.com
+    block domain amazonaws.com
     
     # Block common attack sources
-    block country:CN
-    block country:IR
-    block country:RU
+    block geoip:CN
+    block geoip:IR
+    block geoip:RU
     
     # Direct for private IPs
-    direct private
-
+    direct ip:private
 EOF
     
     # 验证配置文件格式
@@ -408,7 +392,13 @@ EOF
     fi
     
     echo -e "${GREEN}Hysteria2 配置完成！${PLAIN}"
-    echo -e "${YELLOW}当前带宽设置：上行 ${BANDWIDTH_UP}Mbps，下行 ${BANDWIDTH_DOWN}Mbps${PLAIN}"
+    echo -e "${YELLOW}当前带宽设置：上行 ${BANDWIDTH_UP} mbps，下行 ${BANDWIDTH_DOWN} mbps${PLAIN}"
+    
+    # 生成分享链接
+    CURRENT_IP=$(get_ip)
+    CURRENT_PORT=${PORTS%%,*}
+    SHARE_LINK="hysteria2://${PASSWORD}@${CURRENT_IP}:${CURRENT_PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASSWORD}&fastopen=1&hop=1"
+    echo "$SHARE_LINK" > /etc/hysteria2/share_link.txt
     
     # 显示配置内容以便调试
     echo -e "${YELLOW}配置文件内容:${PLAIN}"
@@ -605,15 +595,6 @@ YELLOW="\033[33m"
 BLUE="\033[36m"
 PLAIN="\033[0m"
 
-# 获取脚本路径
-SCRIPT_PATH="/usr/local/bin/hysteria2_deploy.sh"
-if [ ! -f "$SCRIPT_PATH" ]; then
-    SCRIPT_PATH=$(dirname "$(readlink -f "$0")")/hysteria2_deploy.sh
-fi
-if [ ! -f "$SCRIPT_PATH" ]; then
-    SCRIPT_PATH="/root/hysteria2_deploy.sh"
-fi
-
 show_menu() {
     echo -e "${GREEN}===============================${PLAIN}"
     echo -e "${GREEN}   Hysteria2 管理菜单 v1.0   ${PLAIN}"
@@ -629,27 +610,68 @@ show_menu() {
     
     case "$num" in
         1)
-            bash "$SCRIPT_PATH" reinstall
+            echo -e "${YELLOW}正在重新安装 Hysteria2...${PLAIN}"
+            systemctl stop hysteria2
+            systemctl disable hysteria2
+            rm -f /etc/systemd/system/hysteria2.service
+            bash /usr/local/bin/hysteria2_deploy.sh reinstall
+            echo -e "${GREEN}重新安装完成${PLAIN}"
+            read -p "按任意键继续..." enter
+            show_menu
             ;;
         2)
-            bash "$SCRIPT_PATH" status
+            echo -e "${YELLOW}当前 Hysteria2 状态:${PLAIN}"
+            systemctl status hysteria2
             read -p "按任意键继续..." enter
             show_menu
             ;;
         3)
-            bash "$SCRIPT_PATH" link
+            if [ -f /etc/hysteria2/share_link.txt ]; then
+                echo -e "${GREEN}分享链接:${PLAIN} $(cat /etc/hysteria2/share_link.txt)"
+            else
+                # 重新生成分享链接
+                PASSWORD=$(grep -A1 "password:" /etc/hysteria2/config.yaml | grep -v "password:" | awk '{print $2}')
+                OBFS_PASS=$(grep -A2 "salamander:" /etc/hysteria2/config.yaml | grep "password:" | awk '{print $2}')
+                IP=$(curl -s4m8 ip.sb || curl -s6m8 ip.sb || curl -s4m8 ifconfig.me || curl -s6m8 ifconfig.me)
+                PORT=$(grep "listen:" /etc/hysteria2/config.yaml | awk -F':' '{print $3}')
+                SHARE_LINK="hysteria2://${PASSWORD}@${IP}:${PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASS}&fastopen=1&hop=1"
+                echo "$SHARE_LINK" > /etc/hysteria2/share_link.txt
+                echo -e "${GREEN}分享链接:${PLAIN} $SHARE_LINK"
+            fi
             read -p "按任意键继续..." enter
             show_menu
             ;;
         4)
-            bash "$SCRIPT_PATH" config
+            echo -e "${GREEN}Hysteria2 配置信息:${PLAIN}"
+            echo -e "${YELLOW}----------------------------------${PLAIN}"
+            cat /etc/hysteria2/config.yaml
+            echo -e "${YELLOW}----------------------------------${PLAIN}"
+            
+            # 显示IP和端口信息
+            IP=$(curl -s4m8 ip.sb || curl -s6m8 ip.sb || curl -s4m8 ifconfig.me || curl -s6m8 ifconfig.me)
+            PORT=$(grep "listen:" /etc/hysteria2/config.yaml | awk -F':' '{print $3}')
+            echo -e "${GREEN}服务器 IP:${PLAIN} $IP"
+            echo -e "${GREEN}端口:${PLAIN} $PORT"
+            
+            # 显示证书有效期
+            if [ -f /etc/hysteria2/cert/cert.crt ]; then
+                echo -e "${YELLOW}证书信息:${PLAIN}"
+                openssl x509 -in /etc/hysteria2/cert/cert.crt -noout -dates
+            fi
+            
             read -p "按任意键继续..." enter
             show_menu
             ;;
         5)
-            bash "$SCRIPT_PATH" uninstall
-            echo -e "${GREEN}卸载完成，按任意键继续...${PLAIN}"
-            read enter
+            echo -e "${RED}警告: 即将卸载 Hysteria2${PLAIN}"
+            read -p "确定要卸载吗? (y/n): " confirm
+            if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                bash /usr/local/bin/hysteria2_deploy.sh uninstall
+                echo -e "${GREEN}Hysteria2 已卸载${PLAIN}"
+            else
+                echo -e "${GREEN}已取消卸载${PLAIN}"
+            fi
+            read -p "按任意键继续..." enter
             show_menu
             ;;
         0)
