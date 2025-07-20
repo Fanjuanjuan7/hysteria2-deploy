@@ -93,14 +93,18 @@ net.netfilter.nf_conntrack_tcp_timeout_established=7200
 EOF
 sysctl -p
 
-# 生成随机参数
+# 修改生成端口和链接的部分
 echo -e "${YELLOW}生成配置参数...${PLAIN}"
 base_port=$((RANDOM % 10000 + 20000))
-ports="$base_port"
 # 生成额外端口用于端口跳跃
+hop_ports=""
 for i in {1..4}; do
-  ports="$ports,$((base_port + i * 97))"
+    next_port=$((base_port + i * 97))
+    hop_ports="$hop_ports,$next_port"
 done
+all_ports="$base_port$hop_ports"
+ports="$all_ports"  # 保持变量兼容性
+
 password=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
 obfs_password=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
 
@@ -268,8 +272,18 @@ generate_links() {
     echo -e "${YELLOW}密码:${PLAIN} $password"
     echo -e "${YELLOW}混淆密码:${PLAIN} $obfs_password"
     
+    # 生成端口跳跃范围
+    hop_ports=""
+    for i in {1..4}; do
+        next_port=$((port + i * 97))
+        hop_ports="$hop_ports,$next_port"
+    done
+    all_ports="$port$hop_ports"
+    
     echo -e "${GREEN}分享链接:${PLAIN}"
     echo -e "hysteria2://$password@$ip:$port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com"
+    echo -e "${GREEN}端口跳跃链接:${PLAIN}"
+    echo -e "hysteria2://$password@$ip:$all_ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com&hops=$all_ports"
     
     # 创建客户端配置
     mkdir -p /etc/hysteria2
@@ -287,6 +301,9 @@ bandwidth:
   up: 10 mbps
   down: 10 mbps
 fastOpen: true
+hops:
+  ports: ["$base_port", "$((base_port + 97))", "$((base_port + 97*2))", "$((base_port + 97*3))", "$((base_port + 97*4))"]
+  interval: 10s
 socks5:
   listen: 127.0.0.1:1080
 http:
@@ -294,6 +311,7 @@ http:
 EOCLIENT
     
     echo -e "${GREEN}客户端配置已保存至:${PLAIN} /etc/hysteria2/client.yaml"
+    echo -e "${YELLOW}提示: 端口跳跃功能需要确保所有端口($all_ports)都在防火墙中放行${PLAIN}"
 }
 
 uninstall_hysteria2() {
@@ -495,7 +513,7 @@ echo -e "${GREEN}=============================${PLAIN}"
 
 # 修改生成分享链接的部分，确保兼容性
 echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com"
-echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&hop=1&up=10&down=10&sni=www.apple.com"
+echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$all_ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com&hop=1"
 
 # 添加防火墙放行提示
 echo -e "\n${YELLOW}===== 防火墙端口放行指南 =====${PLAIN}"
