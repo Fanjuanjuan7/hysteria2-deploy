@@ -269,7 +269,7 @@ generate_links() {
     echo -e "${YELLOW}混淆密码:${PLAIN} $obfs_password"
     
     echo -e "${GREEN}分享链接:${PLAIN}"
-    echo -e "hysteria2://$password@$ip:$port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1"
+    echo -e "hysteria2://$password@$ip:$port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com"
     
     # 创建客户端配置
     mkdir -p /etc/hysteria2
@@ -278,10 +278,14 @@ server: $ip:$port
 auth: $password
 tls:
   insecure: true
+  sni: www.apple.com
 obfs:
   type: salamander
   salamander:
     password: $obfs_password
+bandwidth:
+  up: 10 mbps
+  down: 10 mbps
 fastOpen: true
 socks5:
   listen: 127.0.0.1:1080
@@ -325,6 +329,7 @@ if command -v firewall-cmd &>/dev/null; then
     done
     firewall-cmd --permanent --add-port=443/tcp
     firewall-cmd --reload
+    echo -e "${GREEN}已配置firewalld防火墙规则${PLAIN}"
 elif command -v ufw &>/dev/null; then
     # Ubuntu/Debian with UFW
     for PORT in "${PORT_ARRAY[@]}"; do
@@ -332,6 +337,7 @@ elif command -v ufw &>/dev/null; then
     done
     ufw allow 443/tcp
     ufw reload
+    echo -e "${GREEN}已配置UFW防火墙规则${PLAIN}"
 elif command -v iptables &>/dev/null; then
     # 通用 iptables
     for PORT in "${PORT_ARRAY[@]}"; do
@@ -340,8 +346,21 @@ elif command -v iptables &>/dev/null; then
     iptables -A INPUT -p tcp --dport 443 -j ACCEPT
     if command -v iptables-save &>/dev/null; then
         iptables-save > /etc/iptables.rules
+        echo -e "${GREEN}已配置iptables防火墙规则并保存${PLAIN}"
+    else 
+        echo -e "${YELLOW}已配置iptables防火墙规则，但可能需要手动保存${PLAIN}"
     fi
+else
+    echo -e "${YELLOW}未检测到防火墙服务，可能需要手动配置防火墙规则${PLAIN}"
+    echo -e "${YELLOW}请确保以下端口已开放:${PLAIN}"
+    echo -e "${YELLOW}UDP端口: $ports${PLAIN}"
+    echo -e "${YELLOW}TCP端口: 443${PLAIN}"
 fi
+
+# 针对云服务器环境提示
+echo -e "${YELLOW}如果您使用的是云服务器(阿里云/腾讯云等)，请同时在云控制台安全组中开放以下端口:${PLAIN}"
+echo -e "${YELLOW}UDP端口: $ports${PLAIN}"
+echo -e "${YELLOW}TCP端口: 443${PLAIN}"
 
 # 重启服务
 echo -e "${YELLOW}启动服务...${PLAIN}"
@@ -370,8 +389,35 @@ echo -e "${GREEN}混淆密码:${PLAIN} $obfs_password"
 echo -e "${GREEN}端口跳跃:${PLAIN} $ports"
 echo -e "${GREEN}=============================${PLAIN}"
 
-echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1"
-echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&hop=1"
+# 修改生成分享链接的部分，确保兼容性
+echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&up=10&down=10&sni=www.apple.com"
+echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&fastopen=1&hop=1&up=10&down=10&sni=www.apple.com"
+
+# 添加防火墙放行提示
+echo -e "\n${YELLOW}===== 防火墙端口放行指南 =====${PLAIN}"
+echo -e "${GREEN}请确保以下端口已在防火墙中开放:${PLAIN}"
+echo -e "UDP 端口: $ports (Hysteria2)"
+echo -e "TCP 端口: 443 (HTTPS/Nginx)"
+echo -e "\n${YELLOW}各类防火墙放行命令:${PLAIN}"
+echo -e "${GREEN}1. iptables:${PLAIN}"
+for PORT in ${ports//,/ }; do
+  echo "iptables -A INPUT -p udp --dport $PORT -j ACCEPT"
+done
+echo "iptables -A INPUT -p tcp --dport 443 -j ACCEPT"
+echo -e "\n${GREEN}2. firewalld(CentOS/RHEL):${PLAIN}"
+for PORT in ${ports//,/ }; do
+  echo "firewall-cmd --permanent --add-port=$PORT/udp"
+done
+echo "firewall-cmd --permanent --add-port=443/tcp"
+echo "firewall-cmd --reload"
+echo -e "\n${GREEN}3. ufw(Debian/Ubuntu):${PLAIN}"
+for PORT in ${ports//,/ }; do
+  echo "ufw allow $PORT/udp"
+done
+echo "ufw allow 443/tcp"
+echo "ufw reload"
+echo -e "\n${GREEN}4. Alibaba Cloud/腾讯云/华为云安全组:${PLAIN}"
+echo "请登录云平台控制台，在安全组规则中放行上述UDP及TCP端口"
 
 echo -e "${GREEN}=============================${PLAIN}"
 echo -e "${GREEN}使用 'fff' 命令进入管理菜单${PLAIN}"
@@ -428,6 +474,10 @@ obfs:
   type: salamander
   salamander:
     password: $obfs_password
+
+bandwidth:
+  up: 10 mbps
+  down: 10 mbps
 
 fastOpen: true
 
