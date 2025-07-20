@@ -83,10 +83,13 @@ net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_fin_timeout=30
-net.ipv4.tcp_keepalive_time=600
-net.ipv4.tcp_keepalive_intvl=15
-net.ipv4.tcp_keepalive_probes=10
+net.ipv4.tcp_keepalive_time=60
+net.ipv4.tcp_keepalive_intvl=10
+net.ipv4.tcp_keepalive_probes=9
 net.ipv4.tcp_mtu_probing=1
+net.ipv4.tcp_retries2=12
+net.ipv4.ip_local_port_range=10000 65000
+net.netfilter.nf_conntrack_tcp_timeout_established=7200
 EOF
 sysctl -p
 
@@ -123,8 +126,8 @@ masquerade:
     dir: /var/www/html
 
 bandwidth:
-  up: 25 mbps
-  down: 25 mbps
+  up: 10 mbps
+  down: 10 mbps
 
 obfs:
   type: salamander
@@ -136,8 +139,8 @@ quic:
   maxStreamReceiveWindow: 8388608
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
-  keepAlivePeriod: 10s
+  maxIdleTimeout: 60s
+  keepAlivePeriod: 5s
 EOF
 
 # 创建systemd服务
@@ -372,4 +375,103 @@ echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$ports?in
 
 echo -e "${GREEN}=============================${PLAIN}"
 echo -e "${GREEN}使用 'fff' 命令进入管理菜单${PLAIN}"
-echo -e "${GREEN}=============================${PLAIN}" 
+echo -e "${GREEN}=============================${PLAIN}"
+
+# 生成可直接复制的配置文件
+echo -e "\n${YELLOW}===== 服务器配置 (server_config.yaml) =====${PLAIN}"
+cat << EOF
+listen: :$base_port
+
+tls:
+  cert: /etc/hysteria2/cert/cert.crt
+  key: /etc/hysteria2/cert/private.key
+
+auth:
+  type: password
+  password: $password
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://www.apple.com/
+    rewriteHost: true
+
+bandwidth:
+  up: 10 mbps
+  down: 10 mbps
+
+obfs:
+  type: salamander
+  salamander:
+    password: $obfs_password
+
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 60s
+  keepAlivePeriod: 5s
+EOF
+
+echo -e "\n${YELLOW}===== 客户端配置 (client_config.yaml) =====${PLAIN}"
+cat << EOF
+server: $ip:$base_port
+
+auth: $password
+
+tls:
+  insecure: true
+  sni: www.apple.com
+
+obfs:
+  type: salamander
+  salamander:
+    password: $obfs_password
+
+fastOpen: true
+
+hopInterval: 30
+
+retry: 3
+
+socks5:
+  listen: 127.0.0.1:1080
+
+http:
+  listen: 127.0.0.1:8080
+EOF
+
+# 生成优化系统参数
+echo -e "\n${YELLOW}===== 优化系统参数 (sysctl.conf) =====${PLAIN}"
+cat << EOF
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_fin_timeout=30
+net.ipv4.tcp_keepalive_time=60
+net.ipv4.tcp_keepalive_intvl=10
+net.ipv4.tcp_keepalive_probes=9
+net.ipv4.tcp_mtu_probing=1
+net.ipv4.tcp_retries2=12
+net.ipv4.ip_local_port_range=10000 65000
+net.netfilter.nf_conntrack_tcp_timeout_established=7200
+EOF
+
+# 创建监控脚本
+cat > /usr/local/bin/hysteria2-monitor.sh << 'EOF'
+#!/bin/bash
+check_and_restart() {
+  if ! systemctl is-active --quiet hysteria2; then
+    systemctl restart hysteria2
+    echo "$(date) - Hysteria2 服务已重启" >> /var/log/hysteria2-monitor.log
+  fi
+}
+check_and_restart
+EOF
+chmod +x /usr/local/bin/hysteria2-monitor.sh
+
+# 添加定时任务每分钟检查
+(crontab -l 2>/dev/null | grep -v "hysteria2-monitor.sh"; echo "* * * * * /usr/local/bin/hysteria2-monitor.sh") | crontab -
+
+echo -e "\n${GREEN}已添加自动监控脚本，每分钟检查服务状态并自动重启${PLAIN}" 
