@@ -130,8 +130,8 @@ masquerade:
     dir: /var/www/html
 
 bandwidth:
-  up: 10 mbps
-  down: 10 mbps
+  up: 50 mbps
+  down: 50 mbps
 
 obfs:
   type: salamander
@@ -143,9 +143,11 @@ quic:
   maxStreamReceiveWindow: 8388608
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 90s
-  keepAlivePeriod: 4s
+  maxIdleTimeout: 120s
+  keepAlivePeriod: 3s
   disablePathMTUDiscovery: false
+
+udpIdleTimeout: 120s
 EOF
 
 # 创建systemd服务
@@ -283,8 +285,7 @@ generate_links() {
     
     echo -e "${GREEN}分享链接:${PLAIN}"
     echo -e "hysteria2://$password@$ip:$port?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4"
-    echo -e "${GREEN}端口跳跃链接:${PLAIN}"
-    echo -e "hysteria2://$password@$ip:$all_ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4&hop=1"
+    echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$base_port-$((base_port+100))?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=50&down=50&sni=www.apple.com&alpn=h3&keepalive=3"
     
     # 创建客户端配置
     mkdir -p /etc/hysteria2
@@ -305,16 +306,22 @@ obfs:
     password: $obfs_password
 
 bandwidth:
-  up: 10 mbps
-  down: 10 mbps
+  up: 50 mbps
+  down: 50 mbps
 
 quic:
   initStreamReceiveWindow: 8388608
   maxStreamReceiveWindow: 8388608
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 90s
-  keepAlivePeriod: 4s
+  maxIdleTimeout: 120s
+  keepAlivePeriod: 3s
+  disablePathMTUDiscovery: false
+
+transport:
+  type: udp
+  udp:
+    hopInterval: 30s
 
 fastOpen: true
 
@@ -526,8 +533,8 @@ echo -e "${GREEN}端口跳跃:${PLAIN} $ports"
 echo -e "${GREEN}=============================${PLAIN}"
 
 # 修改生成分享链接的部分，确保兼容性
-echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4"
-echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$ports?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=10&down=10&sni=www.apple.com&alpn=h3&keepalive=4&hop=1"
+echo -e "${GREEN}分享链接:${PLAIN} hysteria2://$password@$ip:$base_port?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=50&down=50&sni=www.apple.com&alpn=h3&keepalive=3"
+echo -e "${GREEN}端口跳跃链接:${PLAIN} hysteria2://$password@$ip:$base_port-$((base_port+100))?insecure=1&obfs=salamander&obfs-password=$obfs_password&up=50&down=50&sni=www.apple.com&alpn=h3&keepalive=3"
 
 # 添加防火墙放行提示
 echo -e "\n${YELLOW}===== 防火墙端口放行指南 =====${PLAIN}"
@@ -661,3 +668,31 @@ chmod +x /usr/local/bin/hysteria2-monitor.sh
 (crontab -l 2>/dev/null | grep -v "hysteria2-monitor.sh"; echo "* * * * * /usr/local/bin/hysteria2-monitor.sh") | crontab -
 
 echo -e "\n${GREEN}已添加自动监控脚本，每分钟检查服务状态并自动重启${PLAIN}" 
+
+# 开放端口范围
+for port in $(seq $base_port $((base_port+100))); do
+    echo -e "${GREEN}正在开放端口: $port${PLAIN}"
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow $port/udp
+        ufw allow $port/tcp
+    elif command -v firewalld >/dev/null 2>&1; then
+        firewall-cmd --permanent --zone=public --add-port=$port/udp
+        firewall-cmd --permanent --zone=public --add-port=$port/tcp
+    elif command -v iptables >/dev/null 2>&1; then
+        iptables -A INPUT -p udp --dport $port -j ACCEPT
+        iptables -A INPUT -p tcp --dport $port -j ACCEPT
+        if [ -f "/etc/rc.local" ]; then
+            if ! grep -q "iptables -A INPUT -p udp --dport $port -j ACCEPT" /etc/rc.local; then
+                sed -i "/exit 0/i iptables -A INPUT -p udp --dport $port -j ACCEPT" /etc/rc.local
+                sed -i "/exit 0/i iptables -A INPUT -p tcp --dport $port -j ACCEPT" /etc/rc.local
+            fi
+        fi
+    else
+        echo -e "${RED}未检测到防火墙，请手动开放端口${PLAIN}"
+        echo -e "${GREEN}请在你的云服务商安全组中开放 $base_port-$((base_port+100)) UDP端口${PLAIN}"
+    fi
+done
+
+if command -v firewalld >/dev/null 2>&1; then
+    firewall-cmd --reload
+fi 
