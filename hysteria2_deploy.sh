@@ -315,8 +315,8 @@ EOF
 configure_hysteria2() {
     echo -e "${YELLOW}正在配置 Hysteria2...${PLAIN}"
     
-    # 生成随机密码
-    PASSWORD=${PASSWORD:-$(tr -dc 'A-Za-z0-9!@#$%^&*()' < /dev/urandom | head -c 16)}
+    # 生成随机密码 (避免特殊字符)
+    PASSWORD=${PASSWORD:-$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)}
     OBFS_PASSWORD=${OBFS_PASSWORD:-$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)}
     
     # 设置固定带宽为25Mbps（为了在30Mbps限制下保持稳定）
@@ -380,10 +380,7 @@ EOF
     echo -e "${YELLOW}当前带宽设置：上行 ${BANDWIDTH_UP} mbps，下行 ${BANDWIDTH_DOWN} mbps${PLAIN}"
     
     # 生成分享链接
-    CURRENT_IP=$(get_ip)
-    CURRENT_PORT=${PORTS%%,*}
-    SHARE_LINK="hysteria2://${PASSWORD}@${CURRENT_IP}:${CURRENT_PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASSWORD}&fastopen=1&hop=1"
-    echo "$SHARE_LINK" > /etc/hysteria2/share_link.txt
+    generate_share_link
     
     # 显示配置内容以便调试
     echo -e "${YELLOW}配置文件内容:${PLAIN}"
@@ -468,12 +465,49 @@ EOF
 generate_share_link() {
     echo -e "${YELLOW}正在生成分享链接...${PLAIN}"
     
-    local share_link="hysteria2://${PASSWORD}@${IP}:${PORTS}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASSWORD}&fastopen=1&hop=1"
+    CURRENT_IP=$(get_ip)
+    CURRENT_PORT=${PORTS%%,*}  # 仅使用第一个端口，提高兼容性
     
-    echo "$share_link" > /etc/hysteria2/share_link.txt
+    # URL编码处理密码中的特殊字符
+    # 这里我们将生成一个更友好的分享链接
+    URL_PASSWORD=$(echo -n "$PASSWORD" | xxd -plain | tr -d '\n' | sed 's/\(..\)/%\1/g')
     
+    # 生成基本链接
+    SHARE_LINK="hysteria2://${URL_PASSWORD}@${CURRENT_IP}:${CURRENT_PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASSWORD}&fastopen=1"
+    
+    # 生成备用链接 (不带URL编码，某些客户端可能需要)
+    SHARE_LINK_PLAIN="hysteria2://${PASSWORD}@${CURRENT_IP}:${CURRENT_PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASSWORD}&fastopen=1"
+    
+    echo "$SHARE_LINK" > /etc/hysteria2/share_link.txt
+    echo "$SHARE_LINK_PLAIN" > /etc/hysteria2/share_link_plain.txt
+    
+    # 生成客户端配置文件
+    cat > /etc/hysteria2/client.yaml << EOF
+server: ${CURRENT_IP}:${CURRENT_PORT}
+
+auth: ${PASSWORD}
+
+tls:
+  insecure: true
+
+obfs:
+  type: salamander
+  salamander:
+    password: ${OBFS_PASSWORD}
+
+fastOpen: true
+
+socks5:
+  listen: 127.0.0.1:1080
+http:
+  listen: 127.0.0.1:8080
+EOF
+    
+    # 输出成功信息
     echo -e "${GREEN}分享链接已生成！${PLAIN}"
-    echo -e "${BLUE}$share_link${PLAIN}"
+    echo -e "${YELLOW}URL编码链接 (推荐):${PLAIN} $SHARE_LINK"
+    echo -e "${YELLOW}普通链接:${PLAIN} $SHARE_LINK_PLAIN"
+    echo -e "${YELLOW}客户端配置文件已保存至 /etc/hysteria2/client.yaml${PLAIN}"
 }
 
 # 启动 Hysteria2 服务
@@ -612,16 +646,59 @@ show_menu() {
             ;;
         3)
             if [ -f /etc/hysteria2/share_link.txt ]; then
-                echo -e "${GREEN}分享链接:${PLAIN} $(cat /etc/hysteria2/share_link.txt)"
+                echo -e "${GREEN}URL编码分享链接 (推荐):${PLAIN} $(cat /etc/hysteria2/share_link.txt)"
+                if [ -f /etc/hysteria2/share_link_plain.txt ]; then
+                    echo -e "${GREEN}普通分享链接:${PLAIN} $(cat /etc/hysteria2/share_link_plain.txt)"
+                fi
+                echo -e "${YELLOW}提示: 如果导入失败，请尝试另一种链接格式${PLAIN}"
+                echo -e "${YELLOW}客户端配置文件: /etc/hysteria2/client.yaml${PLAIN}"
+                if [ -f /etc/hysteria2/client.yaml ]; then
+                    echo -e "${BLUE}客户端配置内容:${PLAIN}"
+                    cat /etc/hysteria2/client.yaml
+                fi
             else
                 # 重新生成分享链接
-                PASSWORD=$(grep -A1 "password:" /etc/hysteria2/config.yaml | grep -v "password:" | awk '{print $2}')
+                PASSWORD=$(grep -A1 "password:" /etc/hysteria2/config.yaml | grep -v "type:" | awk '{print $2}')
                 OBFS_PASS=$(grep -A2 "salamander:" /etc/hysteria2/config.yaml | grep "password:" | awk '{print $2}')
                 IP=$(curl -s4m8 ip.sb || curl -s6m8 ip.sb || curl -s4m8 ifconfig.me || curl -s6m8 ifconfig.me)
                 PORT=$(grep "listen:" /etc/hysteria2/config.yaml | awk -F':' '{print $3}')
-                SHARE_LINK="hysteria2://${PASSWORD}@${IP}:${PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASS}&fastopen=1&hop=1"
+                
+                # URL编码密码
+                URL_PASSWORD=$(echo -n "$PASSWORD" | xxd -plain | tr -d '\n' | sed 's/\(..\)/%\1/g')
+                
+                # 生成链接
+                SHARE_LINK="hysteria2://${URL_PASSWORD}@${IP}:${PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASS}&fastopen=1"
+                SHARE_LINK_PLAIN="hysteria2://${PASSWORD}@${IP}:${PORT}?insecure=1&obfs=salamander&obfs-password=${OBFS_PASS}&fastopen=1"
+                
                 echo "$SHARE_LINK" > /etc/hysteria2/share_link.txt
-                echo -e "${GREEN}分享链接:${PLAIN} $SHARE_LINK"
+                echo "$SHARE_LINK_PLAIN" > /etc/hysteria2/share_link_plain.txt
+                
+                echo -e "${GREEN}URL编码分享链接 (推荐):${PLAIN} $SHARE_LINK"
+                echo -e "${GREEN}普通分享链接:${PLAIN} $SHARE_LINK_PLAIN"
+                
+                # 生成客户端配置
+                mkdir -p /etc/hysteria2
+                cat > /etc/hysteria2/client.yaml << EOF
+server: ${IP}:${PORT}
+
+auth: ${PASSWORD}
+
+tls:
+  insecure: true
+
+obfs:
+  type: salamander
+  salamander:
+    password: ${OBFS_PASS}
+
+fastOpen: true
+
+socks5:
+  listen: 127.0.0.1:1080
+http:
+  listen: 127.0.0.1:8080
+EOF
+                echo -e "${YELLOW}客户端配置已生成: /etc/hysteria2/client.yaml${PLAIN}"
             fi
             read -p "按任意键继续..." enter
             show_menu
